@@ -14,27 +14,77 @@ class VideoRequest(BaseModel):
     clip_length: int = 30
     num_clips: int = 3
 
+
 @app.get("/")
 def home():
     return {"message": "Video Clipper API Running"}
 
+
 @app.post("/process")
 def process_video(req: VideoRequest):
-    print("Downloading...")
-    video_path = download_video(req.youtube_url)
+    try:
+        print("Downloading...")
+        video_path = download_video(req.youtube_url)
 
-    print("Transcribing...")
-    segments = transcribe(video_path)
-    print(f"Segments: {len(segments)}")
+    except Exception as e:
+        print("Download failed:", str(e))
+        return {
+            "status": "failed",
+            "stage": "download",
+            "message": "YouTube blocked this video or download failed. Try another video."
+        }
 
-    print("Generating subtitles...")
-    generate_srt(segments)
+    try:
+        print("Transcribing...")
+        segments = transcribe(video_path)
+        print(f"Segments: {len(segments)}")
 
-    print("Finding peaks...")
-    peaks = find_peaks(segments, video_path)
-    print(f"Peaks: {peaks}")
+    except Exception as e:
+        print("Transcription failed:", str(e))
+        return {
+            "status": "failed",
+            "stage": "transcription",
+            "message": "Error during transcription."
+        }
 
-    print("Creating clips...")
-    clips = create_clips(video_path, peaks, req.clip_length)
+    try:
+        print("Generating subtitles...")
+        generate_srt(segments)
 
-    return {"clips": clips}
+    except Exception as e:
+        print("Subtitle generation failed:", str(e))
+        return {
+            "status": "failed",
+            "stage": "subtitles",
+            "message": "Error generating subtitles."
+        }
+
+    try:
+        print("Finding peaks...")
+        peaks = find_peaks(segments, video_path)
+        print(f"Peaks: {peaks}")
+
+    except Exception as e:
+        print("Peak detection failed:", str(e))
+        return {
+            "status": "failed",
+            "stage": "analysis",
+            "message": "Error analyzing video."
+        }
+
+    try:
+        print("Creating clips...")
+        clips = create_clips(video_path, peaks, req.clip_length)
+
+    except Exception as e:
+        print("Clip creation failed:", str(e))
+        return {
+            "status": "failed",
+            "stage": "clipping",
+            "message": "Error creating clips."
+        }
+
+    return {
+        "status": "success",
+        "clips": [f"/clips/{clip.split('/')[-1]}" for clip in clips]
+    }
