@@ -1,4 +1,6 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from downloader import download_video
@@ -8,6 +10,19 @@ from clipper import create_clips
 from subtitle_generator import generate_srt
 
 app = FastAPI()
+
+# 🔥 Enable CORS (for React frontend)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # later restrict to your frontend domain
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 🔥 Serve generated clips
+app.mount("/clips", StaticFiles(directory="clips"), name="clips")
+
 
 class VideoRequest(BaseModel):
     youtube_url: str
@@ -22,6 +37,8 @@ def home():
 
 @app.post("/process")
 def process_video(req: VideoRequest):
+
+    # 🔽 DOWNLOAD
     try:
         print("Downloading...")
         video_path = download_video(req.youtube_url)
@@ -34,6 +51,7 @@ def process_video(req: VideoRequest):
             "message": "YouTube blocked this video or download failed. Try another video."
         }
 
+    # 🔽 TRANSCRIBE
     try:
         print("Transcribing...")
         segments = transcribe(video_path)
@@ -47,6 +65,7 @@ def process_video(req: VideoRequest):
             "message": "Error during transcription."
         }
 
+    # 🔽 SUBTITLES
     try:
         print("Generating subtitles...")
         generate_srt(segments)
@@ -59,6 +78,7 @@ def process_video(req: VideoRequest):
             "message": "Error generating subtitles."
         }
 
+    # 🔽 ANALYSIS
     try:
         print("Finding peaks...")
         peaks = find_peaks(segments, video_path)
@@ -72,6 +92,7 @@ def process_video(req: VideoRequest):
             "message": "Error analyzing video."
         }
 
+    # 🔽 CLIPPING
     try:
         print("Creating clips...")
         clips = create_clips(video_path, peaks, req.clip_length)
@@ -84,6 +105,7 @@ def process_video(req: VideoRequest):
             "message": "Error creating clips."
         }
 
+    # 🔽 SUCCESS RESPONSE
     return {
         "status": "success",
         "clips": [f"/clips/{clip.split('/')[-1]}" for clip in clips]
