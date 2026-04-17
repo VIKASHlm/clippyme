@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -19,7 +20,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
+os.makedirs("clips", exist_ok=True)
 # 🔥 Serve generated clips
 app.mount("/clips", StaticFiles(directory="clips"), name="clips")
 
