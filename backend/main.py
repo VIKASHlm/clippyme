@@ -12,17 +12,26 @@ from subtitle_generator import generate_srt
 
 app = FastAPI()
 
-# 🔥 Enable CORS (for React frontend)
+# 🔥 CORS (must be before routes)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # later restrict to your frontend domain
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 🔥 Ensure clips folder exists
 os.makedirs("clips", exist_ok=True)
-# 🔥 Serve generated clips
+
+# 🔥 Serve clips
 app.mount("/clips", StaticFiles(directory="clips"), name="clips")
+
+
+# 🔥 Explicit OPTIONS handler (fixes 405 issue)
+@app.options("/process")
+def options_process():
+    return {"ok": True}
 
 
 class VideoRequest(BaseModel):
@@ -106,7 +115,6 @@ def process_video(req: VideoRequest):
             "message": "Error creating clips."
         }
 
-    # 🔽 SUCCESS RESPONSE
     return {
         "status": "success",
         "clips": [f"/clips/{clip.split('/')[-1]}" for clip in clips]
