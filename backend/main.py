@@ -26,24 +26,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 🔥 folders
-os.makedirs("clips", exist_ok=True)
-os.makedirs("uploads", exist_ok=True)
-os.makedirs("jobs", exist_ok=True)
+# 🔥 Use /tmp for persistence during runtime
+BASE_DIR = "/tmp"
+CLIPS_DIR = os.path.join(BASE_DIR, "clips")
+UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 
-app.mount("/clips", StaticFiles(directory="clips"), name="clips")
+os.makedirs(CLIPS_DIR, exist_ok=True)
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+app.mount("/clips", StaticFiles(directory=CLIPS_DIR), name="clips")
 
 
-# 📦 JOB STORAGE (FILE-BASED)
+# 📦 JOB STORAGE (FILE-BASED in /tmp)
+
+def job_path(job_id):
+    return os.path.join(BASE_DIR, f"{job_id}.json")
+
 
 def save_job(job_id, data):
-    with open(f"jobs/{job_id}.json", "w") as f:
+    with open(job_path(job_id), "w") as f:
         json.dump(data, f)
 
 
 def load_job(job_id):
     try:
-        with open(f"jobs/{job_id}.json", "r") as f:
+        with open(job_path(job_id), "r") as f:
             return json.load(f)
     except:
         return {"status": "not_found"}
@@ -61,7 +68,7 @@ def home():
     return {"message": "ClippyMe API Running 🚀"}
 
 
-# 🎬 YOUTUBE FLOW (ASYNC)
+# 🎬 YOUTUBE FLOW
 @app.post("/process")
 def process_video(req: VideoRequest):
 
@@ -81,12 +88,12 @@ def process_video(req: VideoRequest):
     return {"status": "processing", "job_id": job_id}
 
 
-# 📁 UPLOAD FLOW (ASYNC)
+# 📁 UPLOAD FLOW
 @app.post("/upload")
 def upload_video(file: UploadFile = File(...)):
 
     job_id = str(uuid.uuid4())
-    file_path = f"uploads/{job_id}_{file.filename}"
+    file_path = os.path.join(UPLOAD_DIR, f"{job_id}_{file.filename}")
 
     try:
         with open(file_path, "wb") as buffer:
@@ -111,19 +118,24 @@ def get_status(job_id: str):
 # 🧠 PIPELINE
 def run_pipeline(job_id, video_path, clip_length):
     try:
-        print("Processing started:", job_id)
-
+        print("STEP 1: Transcribing...")
         segments = transcribe(video_path)
+
+        print("STEP 2: Generating subtitles...")
         generate_srt(segments)
+
+        print("STEP 3: Finding peaks...")
         peaks = find_peaks(segments, video_path)
-        clips = create_clips(video_path, peaks, clip_length)
+
+        print("STEP 4: Creating clips...")
+        clips = create_clips(video_path, peaks, clip_length, CLIPS_DIR)
+
+        print("STEP 5: Done!")
 
         save_job(job_id, {
             "status": "done",
-            "clips": [f"/clips/{c.split('/')[-1]}" for c in clips]
+            "clips": [f"/clips/{os.path.basename(c)}" for c in clips]
         })
-
-        print("Processing done:", job_id)
 
     except Exception as e:
         print("Processing error:", e)

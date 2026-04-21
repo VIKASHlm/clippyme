@@ -1,14 +1,14 @@
-import ffmpeg
-import os
+def create_clips(video_path, peaks, clip_length, output_dir="clips"):
+    import os
+    import ffmpeg
 
-def create_clips(video_path, peaks, clip_length=30):
-    os.makedirs("clips", exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
 
     clips = []
 
     for i, peak in enumerate(peaks):
         start = max(0, peak["start"])
-        output = f"clips/clip_{i}.mp4"
+        output = os.path.join(output_dir, f"clip_{i}.mp4")
 
         (
             ffmpeg
