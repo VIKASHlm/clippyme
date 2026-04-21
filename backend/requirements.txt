@@ -6,3 +6,4 @@ ffmpeg-python
 pydantic
 librosa
 numpy
+python-multipart
