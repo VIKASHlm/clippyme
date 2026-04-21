@@ -1,5 +1,8 @@
 import os
 import shutil
+import uuid
+from threading import Thread
+
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -22,20 +25,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 🔥 Folders
+# 🔥 folders
 os.makedirs("clips", exist_ok=True)
 os.makedirs("uploads", exist_ok=True)
 
 app.mount("/clips", StaticFiles(directory="clips"), name="clips")
 
-# 🔥 Fix OPTIONS issue
-@app.options("/process")
-def options_process():
-    return {"ok": True}
-
-@app.options("/upload")
-def options_upload():
-    return {"ok": True}
+# 🔥 job storage (simple memory)
+jobs = {}
 
 
 class VideoRequest(BaseModel):
@@ -49,49 +46,66 @@ def home():
     return {"message": "ClippyMe API Running 🚀"}
 
 
-# 🎬 YOUTUBE FLOW
+# 🎬 YOUTUBE FLOW (ASYNC)
 @app.post("/process")
 def process_video(req: VideoRequest):
 
-    try:
-        video_path = download_video(req.youtube_url)
-    except Exception:
-        return {
-            "status": "failed",
-            "message": "YouTube blocked this video. Try upload instead."
-        }
+    job_id = str(uuid.uuid4())
+    jobs[job_id] = {"status": "processing", "clips": []}
 
-    return process_pipeline(video_path, req.clip_length)
+    def worker():
+        try:
+            video_path = download_video(req.youtube_url)
+            run_pipeline(job_id, video_path, req.clip_length)
+        except Exception as e:
+            print("Download failed:", e)
+            jobs[job_id] = {"status": "failed"}
+
+    Thread(target=worker).start()
+
+    return {"status": "processing", "job_id": job_id}
 
 
-# 📁 UPLOAD FLOW
+# 📁 UPLOAD FLOW (ASYNC)
 @app.post("/upload")
 def upload_video(file: UploadFile = File(...)):
 
+    job_id = str(uuid.uuid4())
+    file_path = f"uploads/{job_id}_{file.filename}"
+
     try:
-        file_path = f"uploads/{file.filename}"
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-    except Exception:
+    except Exception as e:
+        print("Upload error:", e)
         return {"status": "failed", "message": "Upload failed"}
 
-    return process_pipeline(file_path, 30)
+    jobs[job_id] = {"status": "processing", "clips": []}
+
+    Thread(target=run_pipeline, args=(job_id, file_path, 30)).start()
+
+    return {"status": "processing", "job_id": job_id}
 
 
-# 🧠 COMMON PIPELINE
-def process_pipeline(video_path, clip_length):
+# 🔍 STATUS API
+@app.get("/status/{job_id}")
+def get_status(job_id: str):
+    return jobs.get(job_id, {"status": "not_found"})
 
+
+# 🧠 PIPELINE
+def run_pipeline(job_id, video_path, clip_length):
     try:
         segments = transcribe(video_path)
         generate_srt(segments)
         peaks = find_peaks(segments, video_path)
         clips = create_clips(video_path, peaks, clip_length)
 
-        return {
-            "status": "success",
-            "clips": [f"/clips/{clip.split('/')[-1]}" for clip in clips]
+        jobs[job_id] = {
+            "status": "done",
+            "clips": [f"/clips/{c.split('/')[-1]}" for c in clips]
         }
 
     except Exception as e:
-        print("Processing error:", str(e))
-        return {"status": "failed", "message": "Processing failed"}
+        print("Processing error:", e)
+        jobs[job_id] = {"status": "failed"}
