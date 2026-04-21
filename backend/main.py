@@ -1,5 +1,6 @@
 import os
-from fastapi import FastAPI
+import shutil
+from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -12,7 +13,7 @@ from subtitle_generator import generate_srt
 
 app = FastAPI()
 
-# 🔥 CORS (must be before routes)
+# 🔥 CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -21,16 +22,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 🔥 Ensure clips folder exists
+# 🔥 Folders
 os.makedirs("clips", exist_ok=True)
+os.makedirs("uploads", exist_ok=True)
 
-# 🔥 Serve clips
 app.mount("/clips", StaticFiles(directory="clips"), name="clips")
 
-
-# 🔥 Explicit OPTIONS handler (fixes 405 issue)
+# 🔥 Fix OPTIONS issue
 @app.options("/process")
 def options_process():
+    return {"ok": True}
+
+@app.options("/upload")
+def options_upload():
     return {"ok": True}
 
 
@@ -42,80 +46,52 @@ class VideoRequest(BaseModel):
 
 @app.get("/")
 def home():
-    return {"message": "Video Clipper API Running"}
+    return {"message": "ClippyMe API Running 🚀"}
 
 
+# 🎬 YOUTUBE FLOW
 @app.post("/process")
 def process_video(req: VideoRequest):
 
-    # 🔽 DOWNLOAD
     try:
-        print("Downloading...")
         video_path = download_video(req.youtube_url)
-
-    except Exception as e:
-        print("Download failed:", str(e))
+    except Exception:
         return {
             "status": "failed",
-            "stage": "download",
-            "message": "YouTube blocked this video or download failed. Try another video."
+            "message": "YouTube blocked this video. Try upload instead."
         }
 
-    # 🔽 TRANSCRIBE
+    return process_pipeline(video_path, req.clip_length)
+
+
+# 📁 UPLOAD FLOW
+@app.post("/upload")
+def upload_video(file: UploadFile = File(...)):
+
     try:
-        print("Transcribing...")
+        file_path = f"uploads/{file.filename}"
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    except Exception:
+        return {"status": "failed", "message": "Upload failed"}
+
+    return process_pipeline(file_path, 30)
+
+
+# 🧠 COMMON PIPELINE
+def process_pipeline(video_path, clip_length):
+
+    try:
         segments = transcribe(video_path)
-        print(f"Segments: {len(segments)}")
-
-    except Exception as e:
-        print("Transcription failed:", str(e))
-        return {
-            "status": "failed",
-            "stage": "transcription",
-            "message": "Error during transcription."
-        }
-
-    # 🔽 SUBTITLES
-    try:
-        print("Generating subtitles...")
         generate_srt(segments)
-
-    except Exception as e:
-        print("Subtitle generation failed:", str(e))
-        return {
-            "status": "failed",
-            "stage": "subtitles",
-            "message": "Error generating subtitles."
-        }
-
-    # 🔽 ANALYSIS
-    try:
-        print("Finding peaks...")
         peaks = find_peaks(segments, video_path)
-        print(f"Peaks: {peaks}")
+        clips = create_clips(video_path, peaks, clip_length)
 
-    except Exception as e:
-        print("Peak detection failed:", str(e))
         return {
-            "status": "failed",
-            "stage": "analysis",
-            "message": "Error analyzing video."
+            "status": "success",
+            "clips": [f"/clips/{clip.split('/')[-1]}" for clip in clips]
         }
 
-    # 🔽 CLIPPING
-    try:
-        print("Creating clips...")
-        clips = create_clips(video_path, peaks, req.clip_length)
-
     except Exception as e:
-        print("Clip creation failed:", str(e))
-        return {
-            "status": "failed",
-            "stage": "clipping",
-            "message": "Error creating clips."
-        }
-
-    return {
-        "status": "success",
-        "clips": [f"/clips/{clip.split('/')[-1]}" for clip in clips]
-    }
+        print("Processing error:", str(e))
+        return {"status": "failed", "message": "Processing failed"}
