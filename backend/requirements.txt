@@ -1,9 +1,10 @@
 fastapi
 uvicorn
 yt-dlp
-faster-whisper
 ffmpeg-python
-pydantic
+faster-whisper
 librosa
+soundfile
 numpy
+scipy
 python-multipart

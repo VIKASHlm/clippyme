@@ -1,6 +1,7 @@
 import os
 import shutil
 import uuid
+import json
 from threading import Thread
 
 from fastapi import FastAPI, UploadFile, File
@@ -28,13 +29,27 @@ app.add_middleware(
 # 🔥 folders
 os.makedirs("clips", exist_ok=True)
 os.makedirs("uploads", exist_ok=True)
+os.makedirs("jobs", exist_ok=True)
 
 app.mount("/clips", StaticFiles(directory="clips"), name="clips")
 
-# 🔥 job storage (simple memory)
-jobs = {}
+
+# 📦 JOB STORAGE (FILE-BASED)
+
+def save_job(job_id, data):
+    with open(f"jobs/{job_id}.json", "w") as f:
+        json.dump(data, f)
 
 
+def load_job(job_id):
+    try:
+        with open(f"jobs/{job_id}.json", "r") as f:
+            return json.load(f)
+    except:
+        return {"status": "not_found"}
+
+
+# 📥 REQUEST MODEL
 class VideoRequest(BaseModel):
     youtube_url: str
     clip_length: int = 30
@@ -51,7 +66,7 @@ def home():
 def process_video(req: VideoRequest):
 
     job_id = str(uuid.uuid4())
-    jobs[job_id] = {"status": "processing", "clips": []}
+    save_job(job_id, {"status": "processing", "clips": []})
 
     def worker():
         try:
@@ -59,7 +74,7 @@ def process_video(req: VideoRequest):
             run_pipeline(job_id, video_path, req.clip_length)
         except Exception as e:
             print("Download failed:", e)
-            jobs[job_id] = {"status": "failed"}
+            save_job(job_id, {"status": "failed"})
 
     Thread(target=worker).start()
 
@@ -80,7 +95,7 @@ def upload_video(file: UploadFile = File(...)):
         print("Upload error:", e)
         return {"status": "failed", "message": "Upload failed"}
 
-    jobs[job_id] = {"status": "processing", "clips": []}
+    save_job(job_id, {"status": "processing", "clips": []})
 
     Thread(target=run_pipeline, args=(job_id, file_path, 30)).start()
 
@@ -90,22 +105,26 @@ def upload_video(file: UploadFile = File(...)):
 # 🔍 STATUS API
 @app.get("/status/{job_id}")
 def get_status(job_id: str):
-    return jobs.get(job_id, {"status": "not_found"})
+    return load_job(job_id)
 
 
 # 🧠 PIPELINE
 def run_pipeline(job_id, video_path, clip_length):
     try:
+        print("Processing started:", job_id)
+
         segments = transcribe(video_path)
         generate_srt(segments)
         peaks = find_peaks(segments, video_path)
         clips = create_clips(video_path, peaks, clip_length)
 
-        jobs[job_id] = {
+        save_job(job_id, {
             "status": "done",
             "clips": [f"/clips/{c.split('/')[-1]}" for c in clips]
-        }
+        })
+
+        print("Processing done:", job_id)
 
     except Exception as e:
         print("Processing error:", e)
-        jobs[job_id] = {"status": "failed"}
+        save_job(job_id, {"status": "failed"})
